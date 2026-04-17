@@ -1,0 +1,92 @@
+from pathlib import Path
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+
+# -------------------------------------------------------------------
+# Paths
+# -------------------------------------------------------------------
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Database
+DB_PATH = os.getenv("DB_PATH", str(BASE_DIR / "market_sentiment.db"))
+
+# APIs
+MARKETAUX_API_KEY = os.getenv("MARKETAUX_API_KEY", "")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GNEWS_API_KEY = os.getenv("GNEWS_API_KEY", "")
+
+# -------------------------------------------------------------------
+# Source reliability weights (fixed, manually assigned)
+# -------------------------------------------------------------------
+SOURCE_WEIGHTS = {
+    "et_markets":          0.90,
+    "livemint":            0.88,
+    "business_standard":   0.85,
+    "moneycontrol":        0.80,
+    "marketaux":           0.75,
+    "google_news":         0.70,
+    "gnews":               0.70,
+    "ndtv_profit":         0.70,
+    "reddit_india_invest": 0.40,
+    "reddit_indian_stock": 0.35,
+    "reddit_sensex":       0.30,
+}
+
+# -------------------------------------------------------------------
+# RSS feeds
+# -------------------------------------------------------------------
+RSS_FEEDS = {
+    "et_markets":        "https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms",
+    "livemint":          "https://www.livemint.com/rss/markets",
+    "business_standard": "https://www.business-standard.com/rss/markets-106.rss",
+    "moneycontrol":      "https://www.moneycontrol.com/rss/marketnews.xml",
+}
+
+# -------------------------------------------------------------------
+# Reddit subreddits  {source_id: (subreddit_name, weight)}
+# Uses public JSON API (no OAuth credentials needed)
+# -------------------------------------------------------------------
+SUBREDDITS = {
+    "reddit_india_invest": ("IndiaInvestments",  0.40),
+    "reddit_indian_stock": ("IndianStockMarket", 0.35),
+    "reddit_sensex":       ("Sensex",            0.30),
+}
+
+REDDIT_FETCH_LIMIT = 50  # posts per subreddit, .new()
+REDDIT_USER_AGENT  = os.getenv("REDDIT_USER_AGENT", "market_sentiment_academic/0.1")
+
+# -------------------------------------------------------------------
+# NDTV Profit
+# -------------------------------------------------------------------
+NDTV_URL = "https://www.ndtvprofit.com/markets"
+NDTV_REQUEST_DELAY = 2  # seconds between requests
+
+# -------------------------------------------------------------------
+# MarketAux API
+# -------------------------------------------------------------------
+MARKETAUX_API_KEY = os.getenv("MARKETAUX_API_KEY", "")
+MARKETAUX_URL = "https://api.marketaux.com/v1/news/all"
+MARKETAUX_BASE_URL = MARKETAUX_URL  # alias used by marketaux_scraper
+
+# -------------------------------------------------------------------
+# Scheduling (times in IST / Asia/Kolkata)
+# -------------------------------------------------------------------
+SCHEDULER_TIMEZONE = "Asia/Kolkata"
+MARKET_OPEN_HOUR  = 9
+MARKET_CLOSE_HOUR = 16
+
+# -------------------------------------------------------------------
+# Aggregation
+# -------------------------------------------------------------------
+LAMBDA_DECAY_24H = 0.30   # heavier decay for 24h window
+LAMBDA_DECAY_7D  = 0.05   # lighter decay for 7d window
+MIN_DOCS_FOR_SCORE = 2    # never surface a score below this
+LOW_CONFIDENCE_THRESHOLD = 0.55
+
+# -------------------------------------------------------------------
+# LLM / Agent (loaded from .env)
+# -------------------------------------------------------------------
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")

@@ -1,0 +1,199 @@
+{
+  "Reliance": "RELIANCE",
+  "Reliance Industries": "RELIANCE",
+  "RIL": "RELIANCE",
+  "Ambani": "RELIANCE",
+
+  "TCS": "TCS",
+  "Tata Consultancy": "TCS",
+  "Tata Consultancy Services": "TCS",
+
+  "Infosys": "INFY",
+  "Infy": "INFY",
+
+  "HDFC Bank": "HDFCBANK",
+  "HDFC": "HDFCBANK",
+  "HDFCBank": "HDFCBANK",
+
+  "ICICI Bank": "ICICIBANK",
+  "ICICI": "ICICIBANK",
+
+  "Wipro": "WIPRO",
+
+  "HCL Tech": "HCLTECH",
+  "HCL Technologies": "HCLTECH",
+  "HCL": "HCLTECH",
+
+  "Bajaj Finance": "BAJFINANCE",
+  "Bajaj Finserv": "BAJAJFINSV",
+
+  "Kotak Bank": "KOTAKBANK",
+  "Kotak Mahindra": "KOTAKBANK",
+  "Kotak": "KOTAKBANK",
+  "Uday Kotak": "KOTAKBANK",
+  
+
+  "Axis Bank": "AXISBANK",
+
+  "Larsen": "LT",
+  "L&T": "LT",
+  "Larsen and Toubro": "LT",
+  "Larsen & Toubro": "LT",
+
+  "SBI": "SBIN",
+  "State Bank": "SBIN",
+  "State Bank of India": "SBIN",
+
+  "Sun Pharma": "SUNPHARMA",
+  "Sun Pharmaceutical": "SUNPHARMA",
+
+  "Titan": "TITAN",
+  "Titan Company": "TITAN",
+
+  "Asian Paints": "ASIANPAINT",
+
+  "Maruti": "MARUTI",
+  "Maruti Suzuki": "MARUTI",
+
+  "Tata Motors": "TMCV",
+  "Tata CV": "TMCV",
+  "Tata Commercial Vehicles": "TMCV",
+  "Tata Passenger Vehicles": "TMPV",
+  "TMPV": "TMPV",
+
+  "Tata Steel": "TATASTEEL",
+
+  "NTPC": "NTPC",
+
+  "Power Grid": "POWERGRID",
+  "Power Grid Corporation": "POWERGRID",
+
+  "Coal India": "COALINDIA",
+
+  "Adani Ports": "ADANIPORTS",
+  "Adani Enterprises": "ADANIENT",
+  "Adani Green": "ADANIGREEN",
+  "Adani Power": "ADANIPOWER",
+  "Adani Total Gas": "ATGL",
+
+  "Tech Mahindra": "TECHM",
+  "TechM": "TECHM",
+
+  "UltraTech": "ULTRACEMCO",
+  "UltraTech Cement": "ULTRACEMCO",
+
+  "JSW Steel": "JSWSTEEL",
+  "JSW": "JSWSTEEL",
+
+  "IndusInd Bank": "INDUSINDBK",
+  "IndusInd": "INDUSINDBK",
+
+  "Nestle India": "NESTLEIND",
+  "Nestle": "NESTLEIND",
+
+  "Hindalco": "HINDALCO",
+  "Hindalco Industries": "HINDALCO",
+
+  "Cipla": "CIPLA",
+
+  "Dr Reddy": "DRREDDY",
+  "Dr. Reddy's": "DRREDDY",
+  "Dr Reddys": "DRREDDY",
+
+  "Divis": "DIVISLAB",
+  "Divis Laboratories": "DIVISLAB",
+
+  "Britannia": "BRITANNIA",
+
+  "Eicher Motors": "EICHERMOT",
+  "Royal Enfield": "EICHERMOT",
+
+  "Hero MotoCorp": "HEROMOTOCO",
+  "Hero Moto": "HEROMOTOCO",
+
+  "Bajaj Auto": "BAJAJ-AUTO",
+
+  "M&M": "M&M",
+  "Mahindra": "M&M",
+  "Mahindra and Mahindra": "M&M",
+  "Mahindra & Mahindra": "M&M",
+
+  "ITC": "ITC",
+
+  "ONGC": "ONGC",
+  "Oil and Natural Gas": "ONGC",
+
+  "IOC": "IOC",
+  "Indian Oil": "IOC",
+  "Indian Oil Corporation": "IOC",
+
+  "BPCL": "BPCL",
+  "Bharat Petroleum": "BPCL",
+
+  "Shriram Finance": "SHRIRAMFIN",
+
+  "Zomato": "ETERNAL",
+  "Eternal": "ETERNAL",
+  "Eternal Limited": "ETERNAL",
+  "Deepinder Goyal": "ETERNAL",
+
+  "Paytm": "PAYTM",
+  "One97": "PAYTM",
+  
+
+  "Nykaa": "NYKAA",
+  "FSN E-Commerce": "NYKAA",
+
+  "Delhivery": "DELHIVERY",
+
+  "PNB": "PNB",
+  "Punjab National Bank": "PNB",
+
+  "Bank of Baroda": "BANKBARODA",
+  "BOB": "BANKBARODA",
+
+  "Canara Bank": "CANBK",
+
+  "HAL": "HAL",
+  "Hindustan Aeronautics": "HAL",
+
+  "BEL": "BEL",
+  "Bharat Electronics": "BEL",
+
+  "IRCTC": "IRCTC",
+
+  "Dixon Technologies": "DIXON",
+  "Dixon": "DIXON",
+
+  "Trent": "TRENT",
+
+  "Varun Beverages": "VBL",
+
+  "Pidilite": "PIDILITIND",
+  "Pidilite Industries": "PIDILITIND",
+
+  "Havells": "HAVELLS",
+  "Havells India": "HAVELLS",
+
+  "Godrej Consumer": "GODREJCP",
+  "Godrej Properties": "GODREJPROP",
+
+  "Dabur": "DABUR",
+  "Dabur India": "DABUR",
+
+  "Marico": "MARICO",
+
+  "Berger Paints": "BERGEPAINT",
+
+  "Grasim": "GRASIM",
+  "Grasim Industries": "GRASIM",
+
+  "Vedanta": "VEDL",
+  "Vedanta Limited": "VEDL",
+
+  "Ambuja Cement": "AMBUJACEM",
+  "Ambuja": "AMBUJACEM",
+
+  "ACC": "ACC",
+  "ACC Limited": "ACC"
+}

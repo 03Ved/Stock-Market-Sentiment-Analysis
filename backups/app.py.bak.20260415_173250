@@ -1,0 +1,413 @@
+"""
+Market Sentiment Analyzer — Dashboard
+Industry-inspired minimal dark UI.
+
+Run with:  streamlit run dashboard/app.py
+Requires:  FastAPI server at $API_BASE_URL (default http://localhost:8000)
+           plotly in requirements.txt
+"""
+
+import os
+from collections import defaultdict
+from datetime import datetime
+
+import requests
+import streamlit as st
+
+API_BASE = os.getenv("API_BASE_URL", "http://localhost:8000")
+
+# ── Page config — must be the very first Streamlit call ───────────────────────
+st.set_page_config(
+    page_title="Market Sentiment",
+    page_icon=None,
+    layout="centered",
+    initial_sidebar_state="collapsed",
+)
+
+# ── CSS injection ─────────────────────────────────────────────────────────────
+st.markdown("""
+<style>
+  .stApp { background: #0b0b0b !important; }
+  .stApp > header { display: none !important; }
+  .block-container { padding: 2.5rem 2rem 4rem !important; max-width: 820px !important; }
+
+  html, body, [class*="css"] {
+    font-family: system-ui, -apple-system, sans-serif !important;
+    color: #dedede;
+  }
+
+  h1 {
+    font-size: 1rem !important;
+    font-weight: 400 !important;
+    letter-spacing: .12em !important;
+    color: rgba(222,222,222,.45) !important;
+    text-transform: uppercase !important;
+    margin-bottom: 0 !important;
+  }
+  h2, h3 {
+    font-size: 0.7rem !important;
+    font-weight: 400 !important;
+    letter-spacing: .1em !important;
+    color: rgba(222,222,222,.28) !important;
+    text-transform: uppercase !important;
+    margin-bottom: .5rem !important;
+  }
+
+  hr { border-color: rgba(255,255,255,.05) !important; margin: 1.5rem 0 !important; }
+
+  /* Search input */
+  .stTextInput input {
+    background: #111 !important;
+    border: 1px solid rgba(255,255,255,.08) !important;
+    border-radius: 4px !important;
+    color: #dedede !important;
+    font-size: 13px !important;
+    padding: 10px 14px !important;
+    caret-color: #9dcfb4;
+  }
+  .stTextInput input:focus {
+    border-color: rgba(157,207,180,.35) !important;
+    box-shadow: none !important;
+  }
+  .stTextInput label { display: none !important; }
+  .stTextInput input::placeholder { color: rgba(222,222,222,.22) !important; }
+
+  /* Selectbox */
+  .stSelectbox label { display: none !important; }
+  .stSelectbox [data-baseweb="select"] > div {
+    background: #111 !important;
+    border-color: rgba(255,255,255,.08) !important;
+    border-radius: 4px !important;
+    color: #dedede !important;
+    font-size: 13px !important;
+  }
+
+  /* Radio — 24h / 7d toggle */
+  .stRadio > label { display: none !important; }
+  .stRadio label span { font-size: 12px !important; color: rgba(222,222,222,.45) !important; }
+
+  /* Metric cards */
+  [data-testid="metric-container"] {
+    background: #111 !important;
+    border: 1px solid rgba(255,255,255,.05) !important;
+    border-radius: 6px !important;
+    padding: 14px 16px !important;
+  }
+  [data-testid="stMetricLabel"] p {
+    font-size: 10px !important;
+    letter-spacing: .1em !important;
+    color: rgba(222,222,222,.3) !important;
+    text-transform: uppercase !important;
+  }
+  [data-testid="stMetricValue"] {
+    font-family: 'SF Mono','Menlo','Consolas',monospace !important;
+    font-size: 20px !important;
+    font-weight: 300 !important;
+    color: #dedede !important;
+  }
+  [data-testid="stMetricDelta"] { display: none !important; }
+
+  /* Sidebar */
+  section[data-testid="stSidebar"] {
+    background: #0d0d0d !important;
+    border-right: 1px solid rgba(255,255,255,.05) !important;
+  }
+
+  /* Alerts */
+  [data-testid="stAlert"] {
+    background: rgba(255,255,255,.03) !important;
+    border: 1px solid rgba(255,255,255,.07) !important;
+    border-radius: 4px !important;
+    color: rgba(222,222,222,.55) !important;
+  }
+
+  /* Captions */
+  .stCaption p { color: rgba(222,222,222,.28) !important; font-size: 11px !important; }
+
+  /* Plotly container — kill default padding */
+  [data-testid="stPlotlyChart"] { margin: 0 !important; padding: 0 !important; }
+</style>
+""", unsafe_allow_html=True)
+
+# ── Design constants ──────────────────────────────────────────────────────────
+MONO      = "'SF Mono','Menlo','Consolas',monospace"
+POS_COLOR = "#9dcfb4"
+NEG_COLOR = "#c97b72"
+MUTED     = "rgba(222,222,222,.38)"
+
+# ── API helpers ───────────────────────────────────────────────────────────────
+@st.cache_data(ttl=60)
+def api_get(path: str, params: dict = None):
+    try:
+        r = requests.get(f"{API_BASE}{path}", params=params, timeout=10)
+        r.raise_for_status()
+        return r.json()
+    except requests.RequestException as exc:
+        return {"error": str(exc)}
+
+
+def search_symbols(q: str) -> list[str]:
+    if not q:
+        return []
+    data = api_get("/search", {"q": q})
+    return [r["symbol"] for r in data.get("results", [])]
+
+
+# ── Small helpers ─────────────────────────────────────────────────────────────
+def score_color(score: float | None) -> str:
+    if score is None:  return "rgba(222,222,222,.3)"
+    if score >  0.10:  return POS_COLOR
+    if score < -0.10:  return NEG_COLOR
+    return MUTED
+
+
+def sentiment_label(score: float | None) -> str:
+    if score is None:  return "no data"
+    if score >  0.50:  return "strongly bullish"
+    if score >  0.10:  return "bullish"
+    if score < -0.50:  return "strongly bearish"
+    if score < -0.10:  return "bearish"
+    return "neutral"
+
+
+def source_display_name(source_id: str) -> str:
+    names = {
+        "et_markets":          "ET Markets",
+        "livemint":            "LiveMint",
+        "business_standard":   "Business Standard",
+        "moneycontrol":        "MoneyControl",
+        "ndtv_profit":         "NDTV Profit",
+        "reddit_india_invest": "Reddit · IndiaInvestments",
+        "reddit_indian_stock": "Reddit · IndianStockMarket",
+        "reddit_sensex":       "Reddit · Sensex",
+    }
+    return names.get(source_id, source_id.replace("_", " ").title())
+
+
+# ── Render components ─────────────────────────────────────────────────────────
+def render_hero(ticker: str, score: float | None, window: str) -> None:
+    label     = sentiment_label(score)
+    color     = score_color(score)
+    score_str = f"{score:+.3f}" if score is not None else "—"
+    now       = datetime.now().strftime("%d %b %Y · %H:%M IST")
+
+    st.markdown(f"""
+    <div style="margin:.5rem 0 2rem">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:1.8rem">
+        <span style="font-size:12px;letter-spacing:.12em;color:rgba(222,222,222,.45)">{ticker}.NS</span>
+        <span style="font-size:10px;padding:2px 7px;border:1px solid rgba(255,255,255,.09);
+                     border-radius:2px;color:rgba(222,222,222,.28);letter-spacing:.05em">NSE</span>
+        <span style="flex:1"></span>
+        <span style="font-family:{MONO};font-size:10.5px;color:rgba(222,222,222,.22)">{now}</span>
+      </div>
+      <div style="margin-bottom:4px">
+        <span style="font-family:{MONO};font-size:60px;font-weight:300;
+                     letter-spacing:-.025em;color:{color}">{score_str}</span>
+      </div>
+      <div style="color:rgba(222,222,222,.38);font-size:13px">{label}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def render_sparkline(history: list[dict]) -> None:
+    import plotly.graph_objects as go
+
+    dates  = [h["date"]  for h in history]
+    scores = [h["score"] for h in history]
+
+    if not any(s is not None for s in scores):
+        st.caption("no scored data for the past 7 days")
+        return
+
+    fig = go.Figure()
+    fig.add_hline(y=0, line=dict(color="rgba(255,255,255,0.06)", width=1, dash="dot"))
+    fig.add_trace(go.Scatter(
+        x=dates,
+        y=scores,
+        mode="lines+markers",
+        line=dict(color=POS_COLOR, width=1.5),
+        marker=dict(color=POS_COLOR, size=4),
+        hovertemplate="%{x}<br><b>%{y:+.3f}</b><extra></extra>",
+    ))
+    fig.update_layout(
+        height=100,
+        margin=dict(l=0, r=0, t=4, b=0),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        showlegend=False,
+        xaxis=dict(
+            showgrid=False, showline=False, zeroline=False,
+            tickfont=dict(family="system-ui", size=9, color="rgba(222,222,222,.22)"),
+            tickformat="%a",
+        ),
+        yaxis=dict(
+            showgrid=False, showline=False, zeroline=False,
+            showticklabels=False,
+            range=[-1.1, 1.1],
+        ),
+    )
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+
+def render_source_breakdown(articles: list[dict]) -> None:
+    source_scores: dict[str, list[float]] = defaultdict(list)
+    for a in articles:
+        s = (a.get("sentiment") or {}).get("score")
+        if s is not None:
+            source_scores[a["source_id"]].append(s)
+
+    if not source_scores:
+        return
+
+    avgs       = {sid: sum(v) / len(v) for sid, v in source_scores.items()}
+    sorted_src = sorted(avgs.items(), key=lambda x: x[1], reverse=True)
+
+    rows = ""
+    for sid, avg in sorted_src:
+        pct   = f"{abs(avg) * 100:.0f}%"
+        color = POS_COLOR if avg >= 0 else "rgba(201,123,114,.55)"
+        name  = source_display_name(sid)
+        s_str = f"{avg:+.2f}"
+        rows += f"""
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:11px">
+          <span style="font-size:11.5px;color:rgba(222,222,222,.42);width:170px;
+                       flex-shrink:0;white-space:nowrap;overflow:hidden;
+                       text-overflow:ellipsis">{name}</span>
+          <div style="flex:1;height:2px;background:rgba(255,255,255,.07);border-radius:1px">
+            <div style="width:{pct};height:100%;background:{color};border-radius:1px"></div>
+          </div>
+          <span style="font-family:{MONO};font-size:11px;color:rgba(222,222,222,.42);
+                       width:36px;text-align:right;flex-shrink:0">{s_str}</span>
+        </div>"""
+
+    st.markdown(rows, unsafe_allow_html=True)
+
+
+def render_articles(articles: list[dict]) -> None:
+    for i, art in enumerate(articles):
+        s        = (art.get("sentiment") or {}).get("score")
+        color    = score_color(s)
+        s_str    = f"{s:+.2f}" if s is not None else "—"
+        pub      = (art.get("published_at") or "")[:16].replace("T", " ")
+        src_name = source_display_name(art.get("source_id", ""))
+        headline = art.get("headline", "")
+        url      = art.get("url", "#")
+        border   = "border-top:1px solid rgba(255,255,255,.05);" if i > 0 else ""
+
+        st.markdown(f"""
+        <div style="{border}padding:14px 0">
+          <div style="font-size:13px;line-height:1.5;margin-bottom:6px">
+            <a href="{url}" target="_blank"
+               style="color:rgba(222,222,222,.85);text-decoration:none">
+              {headline}
+            </a>
+          </div>
+          <div style="display:flex;align-items:center;justify-content:space-between">
+            <span style="font-size:11px;color:rgba(222,222,222,.28)">{src_name} · {pub}</span>
+            <span style="font-family:{MONO};font-size:11.5px;color:{color}">{s_str}</span>
+          </div>
+        </div>""", unsafe_allow_html=True)
+
+
+# ── Page layout ───────────────────────────────────────────────────────────────
+
+# App wordmark
+st.markdown("""
+<div style="display:flex;align-items:center;gap:12px;margin-bottom:2rem">
+  <span style="font-size:11px;letter-spacing:.14em;color:rgba(222,222,222,.4);
+               text-transform:uppercase">Market Sentiment</span>
+  <span style="flex:1;height:1px;background:rgba(255,255,255,.06)"></span>
+  <span style="font-size:10px;color:rgba(222,222,222,.18);letter-spacing:.06em">NSE / BSE</span>
+</div>
+""", unsafe_allow_html=True)
+
+# Sidebar — system health
+with st.sidebar:
+    st.markdown("### system")
+    health = api_get("/health")
+    if "error" in health:
+        st.error("API unreachable")
+        st.caption(health["error"])
+    else:
+        st.metric("Documents", health.get("doc_count", "—"))
+        st.metric("Scored",    health.get("scored_count", "—"))
+    st.caption(f"endpoint: {API_BASE}")
+
+# Search + window selector
+c1, c2 = st.columns([4, 1])
+with c1:
+    query = st.text_input(
+        "search",
+        placeholder="ticker or company — e.g. RELIANCE, Infosys",
+    )
+with c2:
+    window = st.radio("window", ["24h", "7d"], horizontal=True)
+
+selected = None
+if query:
+    suggestions = search_symbols(query)
+    if suggestions:
+        selected = st.selectbox("pick", suggestions)
+    else:
+        st.caption("no matching tickers")
+
+st.divider()
+
+# Empty state
+if not selected:
+    st.markdown("""
+    <div style="padding:3rem 0;text-align:center;
+                color:rgba(222,222,222,.18);font-size:13px">
+      enter a ticker or company name above
+    </div>""", unsafe_allow_html=True)
+    st.stop()
+
+# ── Data ──────────────────────────────────────────────────────────────────────
+data = api_get(f"/ticker/{selected}", {"window": window})
+
+if "error" in data:
+    st.error(f"API error: {data['error']}")
+    st.stop()
+
+# ── Hero ──────────────────────────────────────────────────────────────────────
+if data.get("status") == "insufficient_data":
+    render_hero(selected, None, window)
+    st.caption(
+        f"insufficient data — {data.get('doc_count', 0)} document(s) found, "
+        f"need at least 2 scored"
+    )
+else:
+    score      = data.get("score")
+    doc_count  = data.get("doc_count", 0)
+    confidence = data.get("confidence", "—")
+
+    render_hero(selected, score, window)
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Score",      f"{score:+.3f}" if score is not None else "—")
+    c2.metric("Documents",  doc_count)
+    c3.metric("Confidence", (confidence or "—").capitalize())
+
+# ── Sparkline ─────────────────────────────────────────────────────────────────
+st.divider()
+st.markdown("### 7-day trend")
+hist = api_get(f"/ticker/{selected}/history", {"days": 7})
+if "error" not in hist and hist.get("history"):
+    render_sparkline(hist["history"])
+else:
+    st.caption("no history available")
+
+# ── Source breakdown ──────────────────────────────────────────────────────────
+articles = data.get("articles", [])
+if articles:
+    st.divider()
+    st.markdown("### source breakdown")
+    render_source_breakdown(articles)
+
+# ── Articles ──────────────────────────────────────────────────────────────────
+if articles:
+    st.divider()
+    st.markdown("### recent articles")
+    render_articles(articles)
+elif data.get("status") != "insufficient_data":
+    st.caption("no articles to display")

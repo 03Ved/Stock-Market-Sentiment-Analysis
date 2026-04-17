@@ -1,0 +1,17 @@
+{
+  "Pretrained FinBERT": {
+    "f1_macro": 0.9264,
+    "f1_weighted": 0.9507,
+    "accuracy": 0.9516
+  },
+  "Fine-tuned FinBERT": {
+    "f1_macro": 0.8979,
+    "f1_weighted": 0.9336,
+    "accuracy": 0.9355
+  },
+  "VADER Baseline": {
+    "f1_macro": 0.4884,
+    "f1_weighted": 0.5662,
+    "accuracy": 0.5484
+  }
+}

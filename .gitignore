@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Virtual environment
+.venv/
+
+# Environment variables
+.env
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+
+# Models (large binary files)
+models/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Claude
+.claude/

@@ -1,0 +1,629 @@
+"""
+Market Sentiment Analyzer — Dashboard
+Industry-inspired minimal dark UI.
+
+Run with:  streamlit run dashboard/app.py
+Requires:  FastAPI server at $API_BASE_URL (default http://localhost:8000)
+           plotly in requirements.txt
+"""
+
+import os
+from collections import defaultdict
+from datetime import datetime
+
+import requests
+import streamlit as st
+
+API_BASE = os.getenv("API_BASE_URL", "http://localhost:8001")
+
+# ── Page config — must be the very first Streamlit call ───────────────────────
+st.set_page_config(
+    page_title="Market Sentiment",
+    page_icon=None,
+    layout="centered",
+    initial_sidebar_state="collapsed",
+)
+
+# ── CSS injection ─────────────────────────────────────────────────────────────
+st.markdown("""
+<style>
+  .stApp { background: #0b0b0b !important; }
+  .stApp > header { display: none !important; }
+  .block-container { padding: 2.5rem 2rem 4rem !important; max-width: 820px !important; }
+
+  html, body, [class*="css"] {
+    font-family: system-ui, -apple-system, sans-serif !important;
+    color: #dedede;
+  }
+
+  h1 {
+    font-size: 1rem !important;
+    font-weight: 400 !important;
+    letter-spacing: .12em !important;
+    color: rgba(222,222,222,.45) !important;
+    text-transform: uppercase !important;
+    margin-bottom: 0 !important;
+  }
+  h2, h3 {
+    font-size: 0.7rem !important;
+    font-weight: 400 !important;
+    letter-spacing: .1em !important;
+    color: rgba(222,222,222,.28) !important;
+    text-transform: uppercase !important;
+    margin-bottom: .5rem !important;
+  }
+
+  hr { border-color: rgba(255,255,255,.05) !important; margin: 1.5rem 0 !important; }
+
+  /* Search input */
+  .stTextInput input {
+    background: #111 !important;
+    border: 1px solid rgba(255,255,255,.08) !important;
+    border-radius: 4px !important;
+    color: #dedede !important;
+    font-size: 13px !important;
+    padding: 10px 14px !important;
+    caret-color: #9dcfb4;
+  }
+  .stTextInput input:focus {
+    border-color: rgba(157,207,180,.35) !important;
+    box-shadow: none !important;
+  }
+  .stTextInput label { display: none !important; }
+  .stTextInput input::placeholder { color: rgba(222,222,222,.22) !important; }
+
+  /* Selectbox */
+  .stSelectbox label { display: none !important; }
+  .stSelectbox [data-baseweb="select"] > div {
+    background: #111 !important;
+    border-color: rgba(255,255,255,.08) !important;
+    border-radius: 4px !important;
+    color: #dedede !important;
+    font-size: 13px !important;
+  }
+
+  /* Radio — 24h / 7d toggle */
+  .stRadio > label { display: none !important; }
+  .stRadio label span { font-size: 12px !important; color: rgba(222,222,222,.45) !important; }
+
+  /* Metric cards */
+  [data-testid="metric-container"] {
+    background: #111 !important;
+    border: 1px solid rgba(255,255,255,.05) !important;
+    border-radius: 6px !important;
+    padding: 14px 16px !important;
+  }
+  [data-testid="stMetricLabel"] p {
+    font-size: 10px !important;
+    letter-spacing: .1em !important;
+    color: rgba(222,222,222,.3) !important;
+    text-transform: uppercase !important;
+  }
+  [data-testid="stMetricValue"] {
+    font-family: 'SF Mono','Menlo','Consolas',monospace !important;
+    font-size: 20px !important;
+    font-weight: 300 !important;
+    color: #dedede !important;
+  }
+  [data-testid="stMetricDelta"] { display: none !important; }
+
+  /* Sidebar */
+  section[data-testid="stSidebar"] {
+    background: #0d0d0d !important;
+    border-right: 1px solid rgba(255,255,255,.05) !important;
+  }
+
+  /* Alerts */
+  [data-testid="stAlert"] {
+    background: rgba(255,255,255,.03) !important;
+    border: 1px solid rgba(255,255,255,.07) !important;
+    border-radius: 4px !important;
+    color: rgba(222,222,222,.55) !important;
+  }
+
+  /* Captions */
+  .stCaption p { color: rgba(222,222,222,.28) !important; font-size: 11px !important; }
+
+  /* Plotly container — kill default padding */
+  [data-testid="stPlotlyChart"] { margin: 0 !important; padding: 0 !important; }
+</style>
+""", unsafe_allow_html=True)
+
+# ── Design constants ──────────────────────────────────────────────────────────
+MONO      = "'SF Mono','Menlo','Consolas',monospace"
+POS_COLOR = "#9dcfb4"
+NEG_COLOR = "#c97b72"
+MUTED     = "rgba(222,222,222,.38)"
+
+# ── API helpers ───────────────────────────────────────────────────────────────
+@st.cache_data(ttl=60)
+def api_get(path: str, params: dict = None):
+    try:
+        r = requests.get(f"{API_BASE}{path}", params=params, timeout=10)
+        r.raise_for_status()
+        return r.json()
+    except requests.RequestException as exc:
+        return {"error": str(exc)}
+
+
+def search_symbols(q: str) -> list[str]:
+    if not q:
+        return []
+    data = api_get("/search", {"q": q})
+    return [r["symbol"] for r in data.get("results", [])]
+
+
+# ── Small helpers ─────────────────────────────────────────────────────────────
+def score_color(score: float | None) -> str:
+    if score is None:  return "rgba(222,222,222,.3)"
+    if score >  0.10:  return POS_COLOR
+    if score < -0.10:  return NEG_COLOR
+    return MUTED
+
+
+def sentiment_label(score: float | None) -> str:
+    if score is None:  return "no data"
+    if score >  0.50:  return "strongly bullish"
+    if score >  0.10:  return "bullish"
+    if score < -0.50:  return "strongly bearish"
+    if score < -0.10:  return "bearish"
+    return "neutral"
+
+
+def source_display_name(source_id: str) -> str:
+    names = {
+        "et_markets":          "ET Markets",
+        "livemint":            "LiveMint",
+        "business_standard":   "Business Standard",
+        "moneycontrol":        "MoneyControl",
+        "google_news":         "Google News",
+        "marketaux":           "MarketAux",
+        "ndtv_profit":         "NDTV Profit",
+        "reddit_india_invest": "Reddit · IndiaInvestments",
+        "reddit_indian_stock": "Reddit · IndianStockMarket",
+        "reddit_sensex":       "Reddit · Sensex",
+    }
+    return names.get(source_id, source_id.replace("_", " ").title())
+
+
+# ── Render components ─────────────────────────────────────────────────────────
+def render_hero(ticker: str, score: float | None, window: str) -> None:
+    label     = sentiment_label(score)
+    color     = score_color(score)
+    score_str = f"{score:+.3f}" if score is not None else "—"
+    now       = datetime.now().strftime("%d %b %Y · %H:%M IST")
+
+    st.markdown(f"""
+    <div style="margin:.5rem 0 2rem">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:1.8rem">
+        <span style="font-size:12px;letter-spacing:.12em;color:rgba(222,222,222,.45)">{ticker}.NS</span>
+        <span style="font-size:10px;padding:2px 7px;border:1px solid rgba(255,255,255,.09);
+                     border-radius:2px;color:rgba(222,222,222,.28);letter-spacing:.05em">NSE</span>
+        <span style="flex:1"></span>
+        <span style="font-family:{MONO};font-size:10.5px;color:rgba(222,222,222,.22)">{now}</span>
+      </div>
+      <div style="margin-bottom:4px">
+        <span style="font-family:{MONO};font-size:60px;font-weight:300;
+                     letter-spacing:-.025em;color:{color}">{score_str}</span>
+      </div>
+      <div style="color:rgba(222,222,222,.38);font-size:13px">{label}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def render_sentiment_chart(symbol: str, window_hours: int) -> None:
+    """Render dual-axis sentiment time-series chart with article count overlay."""
+    try:
+        resp = requests.get(
+            f"{API_BASE}/ticker/{symbol}/history",
+            params={"hours": window_hours, "resolution": "auto"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        st.warning(f"Could not load chart data: {e}")
+        return
+
+    points = data.get("points", [])
+    if not points:
+        st.info("Not enough data points to render a chart for this time window.")
+        return
+
+    import pandas as pd
+    import plotly.graph_objects as go
+
+    df = pd.DataFrame(points)
+    df["timestamp"] = pd.to_datetime(df["timestamp"])
+    df = df[df["score"].notna()]  # drop null-score buckets
+
+    if df.empty:
+        st.info("Not enough scored data points to render a chart.")
+        return
+
+    fig = go.Figure()
+
+    # Sentiment score line
+    fig.add_trace(
+        go.Scatter(
+            x=df["timestamp"],
+            y=df["score"],
+            mode="lines+markers",
+            line=dict(color="#10B981", width=2),
+            fill="tozeroy",
+            fillcolor="rgba(16,185,129,0.1)",
+            name="Sentiment Score",
+        )
+    )
+
+    # Document count as bar overlay on secondary y-axis
+    fig.add_trace(
+        go.Bar(
+            x=df["timestamp"],
+            y=df["doc_count"],
+            name="Article Count",
+            yaxis="y2",
+            marker_color="rgba(99,102,241,0.3)",
+        )
+    )
+
+    fig.update_layout(
+        yaxis=dict(title="Sentiment Score", range=[-1, 1]),
+        yaxis2=dict(title="Article Count", overlaying="y", side="right"),
+        hovermode="x unified",
+        height=400,
+        margin=dict(l=40, r=40, t=20, b=40),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        showlegend=True,
+        legend=dict(font=dict(color="rgba(222,222,222,.45)", size=11)),
+        xaxis=dict(
+            showgrid=False, showline=False,
+            tickfont=dict(color="rgba(222,222,222,.35)", size=10),
+        ),
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def render_highlighted_headline(doc_id: str, headline: str) -> None:
+    """
+    Fetch token attributions and render headline with color-coded words.
+    Green background = positive sentiment driver.
+    Red background = negative sentiment driver.
+    No background = neutral/low attribution.
+    """
+    try:
+        resp = requests.get(f"{API_BASE}/explain/{doc_id}", timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+        attributions = data.get("attributions", [])
+    except Exception:
+        st.write(headline)
+        return
+
+    if not attributions:
+        st.write(headline)
+        return
+
+    # Normalize attributions to [-1, 1] range for consistent coloring
+    max_abs = max(abs(a["attribution"]) for a in attributions) or 1.0
+
+    html_parts = []
+    for item in attributions:
+        tok = item["token"]
+        attr = item["attribution"] / max_abs  # Normalize to [-1, 1]
+
+        if attr > 0.15:
+            opacity = min(abs(attr) * 0.7, 0.7)
+            color = f"rgba(16,185,129,{opacity})"  # Green
+        elif attr < -0.15:
+            opacity = min(abs(attr) * 0.7, 0.7)
+            color = f"rgba(239,68,68,{opacity})"    # Red
+        else:
+            color = "transparent"
+
+        html_parts.append(
+            f'<span style="background-color:{color};padding:2px 4px;'
+            f'border-radius:4px;margin:0 2px;display:inline-block;'
+            f'line-height:1.6">{tok}</span>'
+        )
+
+    st.markdown(
+        f'<div style="font-size:15px;line-height:2">{""  .join(html_parts)}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def render_source_breakdown(articles: list[dict]) -> None:
+    source_scores: dict[str, list[float]] = defaultdict(list)
+    for a in articles:
+        s = (a.get("sentiment") or {}).get("score")
+        if s is not None:
+            source_scores[a["source_id"]].append(s)
+
+    if not source_scores:
+        return
+
+    avgs       = {sid: sum(v) / len(v) for sid, v in source_scores.items()}
+    sorted_src = sorted(avgs.items(), key=lambda x: x[1], reverse=True)
+
+    rows = ""
+    for sid, avg in sorted_src:
+        pct   = f"{abs(avg) * 100:.0f}%"
+        color = POS_COLOR if avg >= 0 else "rgba(201,123,114,.55)"
+        name  = source_display_name(sid)
+        s_str = f"{avg:+.2f}"
+        rows += f"""
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:11px">
+          <span style="font-size:11.5px;color:rgba(222,222,222,.42);width:170px;
+                       flex-shrink:0;white-space:nowrap;overflow:hidden;
+                       text-overflow:ellipsis">{name}</span>
+          <div style="flex:1;height:2px;background:rgba(255,255,255,.07);border-radius:1px">
+            <div style="width:{pct};height:100%;background:{color};border-radius:1px"></div>
+          </div>
+          <span style="font-family:{MONO};font-size:11px;color:rgba(222,222,222,.42);
+                       width:36px;text-align:right;flex-shrink:0">{s_str}</span>
+        </div>"""
+
+    st.markdown(rows, unsafe_allow_html=True)
+
+
+def render_articles(articles: list[dict]) -> None:
+    for i, art in enumerate(articles):
+        s        = (art.get("sentiment") or {}).get("score")
+        color    = score_color(s)
+        s_str    = f"{s:+.2f}" if s is not None else "—"
+        pub      = (art.get("published_at") or "")[:16].replace("T", " ")
+        src_name = source_display_name(art.get("source_id", ""))
+        headline = art.get("headline", "")
+        doc_id   = art.get("id", "")
+        url      = art.get("url", "#")
+
+        with st.expander(f"📊 {headline[:80]}{'...' if len(headline) > 80 else ''}"):
+            render_highlighted_headline(doc_id, headline)
+            st.caption(f"Source: {src_name} · {pub}")
+            st.markdown(
+                f'<a href="{url}" target="_blank" style="font-size:11px;'
+                f'color:rgba(157,207,180,.6)">open article →</a>',
+                unsafe_allow_html=True,
+            )
+            st.markdown(
+                f'<span style="font-family:{MONO};font-size:11.5px;color:{color}">'
+                f'score: {s_str}</span>',
+                unsafe_allow_html=True,
+            )
+
+
+# ── Page layout ───────────────────────────────────────────────────────────────
+
+# App wordmark
+st.markdown("""
+<div style="display:flex;align-items:center;gap:12px;margin-bottom:2rem">
+  <span style="font-size:11px;letter-spacing:.14em;color:rgba(222,222,222,.4);
+               text-transform:uppercase">Market Sentiment</span>
+  <span style="flex:1;height:1px;background:rgba(255,255,255,.06)"></span>
+  <span style="font-size:10px;color:rgba(222,222,222,.18);letter-spacing:.06em">NSE / BSE</span>
+</div>
+""", unsafe_allow_html=True)
+
+# Sidebar — system health
+with st.sidebar:
+    st.markdown("### system")
+    health = api_get("/health")
+    if "error" in health:
+        st.error("API unreachable")
+        st.caption(health["error"])
+    else:
+        st.metric("Documents", health.get("doc_count", "—"))
+        st.metric("Scored",    health.get("scored_count", "—"))
+    st.caption(f"endpoint: {API_BASE}")
+
+# ── Top-level tabs ─────────────────────────────────────────────────────────────
+tab_dashboard, tab_evaluation = st.tabs(["📊 Sentiment Dashboard", "🧠 Model Evaluation"])
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 1 — Sentiment Dashboard
+# ══════════════════════════════════════════════════════════════════════════════
+with tab_dashboard:
+
+    # Search + window selector
+    query = st.text_input(
+        "search",
+        placeholder="ticker or company — e.g. RELIANCE, Infosys",
+    )
+    window_hours = st.slider(
+        "Time Window (hours)",
+        min_value=1,
+        max_value=720,
+        value=24,
+        step=1,
+        format="%d hours",
+        key="window_hours_slider",
+    )
+    window_str = f"{window_hours}h"
+
+    selected = None
+    if query:
+        suggestions = search_symbols(query)
+        if suggestions:
+            selected = st.selectbox("pick", suggestions)
+        else:
+            st.caption("no matching tickers")
+
+    st.divider()
+
+    # Empty state
+    if not selected:
+        st.markdown("""
+        <div style="padding:3rem 0;text-align:center;
+                    color:rgba(222,222,222,.18);font-size:13px">
+          enter a ticker or company name above
+        </div>""", unsafe_allow_html=True)
+    else:
+        # ── Data ──────────────────────────────────────────────────────────────────────
+        data = api_get(f"/ticker/{selected}", {"window": window_str})
+
+        if "error" in data:
+            st.error(f"API error: {data['error']}")
+        else:
+            # ── Hero ──────────────────────────────────────────────────────────────────────
+            if data.get("status") == "insufficient_data":
+                render_hero(selected, None, window_str)
+                st.caption(
+                    f"insufficient data — {data.get('doc_count', 0)} document(s) found, "
+                    f"need at least 2 scored"
+                )
+            else:
+                score      = data.get("score")
+                doc_count  = data.get("doc_count", 0)
+                confidence = data.get("confidence", "—")
+
+                render_hero(selected, score, window_str)
+
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Score",      f"{score:+.3f}" if score is not None else "—")
+                c2.metric("Documents",  doc_count)
+                c3.metric("Confidence", (confidence or "—").capitalize())
+
+            if data.get("live_fetched"):
+                st.caption("⚡ live data fetched for this query")
+
+            # ── Sentiment Chart ───────────────────────────────────────────────────────────
+            st.divider()
+            st.markdown("### sentiment trend")
+            render_sentiment_chart(selected, window_hours)
+
+            # ── Source breakdown ──────────────────────────────────────────────────────────
+            articles = data.get("articles", [])
+            if articles:
+                st.divider()
+                st.markdown("### source breakdown")
+                render_source_breakdown(articles)
+
+            # ── Articles ──────────────────────────────────────────────────────────────────
+            if articles:
+                st.divider()
+                st.markdown("### recent articles")
+                render_articles(articles)
+            elif data.get("status") != "insufficient_data":
+                st.caption("no articles to display")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 2 — Model Evaluation
+# ══════════════════════════════════════════════════════════════════════════════
+with tab_evaluation:
+    st.header("Deep Learning Model Evaluation")
+    st.markdown("Performance analysis of the fine-tuned FinBERT model on Indian financial headlines.")
+
+    # ── Model Comparison ──────────────────────────────────────────────────────
+    st.subheader("Model Comparison")
+    comparison_path  = "evaluation/model_comparison.json"
+    plot_comparison  = "evaluation/plots/model_comparison.png"
+    if os.path.exists(plot_comparison):
+        st.image(plot_comparison, use_container_width=True)
+    if os.path.exists(comparison_path):
+        import json as _json
+        with open(comparison_path, "r", encoding="utf-8") as _f:
+            comparison = _json.load(_f)
+        rows = []
+        for model_name, metrics in comparison.items():
+            rows.append({
+                "Model":       model_name,
+                "F1 Macro":    f"{metrics['f1_macro']:.4f}",
+                "F1 Weighted": f"{metrics.get('f1_weighted', 'N/A')}",
+                "Accuracy":    f"{metrics['accuracy']:.4f}",
+            })
+        st.table(rows)
+    else:
+        st.info("Run `python -m evaluation.model_comparison` to generate comparison data.")
+
+    # ── Confusion Matrix ──────────────────────────────────────────────────────
+    st.subheader("Confusion Matrix")
+    plot_cm = "evaluation/plots/confusion_matrix.png"
+    if os.path.exists(plot_cm):
+        st.image(plot_cm, use_container_width=True)
+    else:
+        st.info("Run `python -m nlp.fine_tune` to generate the confusion matrix.")
+
+    # ── Training Curves ───────────────────────────────────────────────────────
+    st.subheader("Training Curves")
+    plot_tc = "evaluation/plots/training_curves.png"
+    if os.path.exists(plot_tc):
+        st.image(plot_tc, use_container_width=True)
+    else:
+        st.info("Run `python -m nlp.fine_tune` to generate training curves.")
+
+    # ── Live Explainability Demo ──────────────────────────────────────────────
+    st.subheader("Explainability — Token Attribution")
+    st.markdown("Enter a headline to see which words drive the sentiment prediction:")
+    demo_text = st.text_input(
+        "Test headline",
+        value="Reliance Industries reports record quarterly profit amid strong demand",
+        key="eval_demo_text",
+    )
+    if st.button("Explain", key="eval_explain_btn"):
+        with st.spinner("Computing attributions (this takes ~10 seconds)..."):
+            attrs = []
+            try:
+                resp = requests.get(
+                    f"{API_BASE}/explain/demo",
+                    params={"text": demo_text},
+                    timeout=30,
+                )
+                if resp.status_code == 200:
+                    attrs = resp.json().get("attributions", [])
+            except Exception:
+                pass
+
+            if not attrs:
+                try:
+                    from nlp.explainer import explain_text
+                    attrs = explain_text(demo_text, n_steps=30)
+                except Exception as exc:
+                    st.warning(f"Could not compute attributions: {exc}")
+
+            if attrs:
+                max_abs = max(abs(a["attribution"]) for a in attrs) or 1.0
+                html_parts = []
+                for item in attrs:
+                    tok  = item["token"]
+                    attr = item["attribution"] / max_abs
+                    if attr > 0.15:
+                        opacity = min(abs(attr) * 0.7, 0.7)
+                        color   = f"rgba(16,185,129,{opacity})"
+                    elif attr < -0.15:
+                        opacity = min(abs(attr) * 0.7, 0.7)
+                        color   = f"rgba(239,68,68,{opacity})"
+                    else:
+                        color = "transparent"
+                    html_parts.append(
+                        f'<span style="background-color:{color};padding:3px 6px;'
+                        f'border-radius:4px;margin:0 2px;display:inline-block;'
+                        f'font-size:16px;line-height:2">{tok}</span>'
+                    )
+                st.markdown(
+                    f'<div style="margin:10px 0">{"".join(html_parts)}</div>',
+                    unsafe_allow_html=True,
+                )
+                st.caption("🟢 Green = drives positive sentiment  |  🔴 Red = drives negative sentiment")
+            else:
+                st.warning("Could not compute attributions.")
+
+    # ── Dataset Statistics ────────────────────────────────────────────────────
+    st.subheader("Training Dataset Statistics")
+    gold_path   = "data/labeled_headlines.csv"
+    silver_path = "data/silver_labels.csv"
+    for label, path in [("Gold labels", gold_path), ("Silver labels", silver_path)]:
+        if os.path.exists(path):
+            import pandas as _pd
+            df = _pd.read_csv(path, encoding="utf-8")
+            col1, col2, col3 = st.columns(3)
+            col1.metric(f"{label} — Total", len(df))
+            if "label" in df.columns:
+                dist = df["label"].value_counts().to_dict()
+                col2.metric("Positive", dist.get("positive", 0))
+                col3.metric("Negative", dist.get("negative", 0))
+                st.caption(f"Neutral: {dist.get('neutral', 0)}")
+        else:
+            st.caption(f"{label}: not found at `{path}`")

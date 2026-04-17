@@ -1,0 +1,35 @@
+INFO:     Started server process [17631]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+ERROR:    [Errno 98] error while attempting to bind on address ('0.0.0.0', 8000): [errno 98] address already in use
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+[db] Initialised database at ./market_sentiment.db
+Starting API Server...
+
+--- Testing Health ---
+Status: 404
+API Server dead
+Traceback (most recent call last):
+  File "/home/saranshlulla/Documents/Market Sentiment/.venv/lib/python3.13/site-packages/requests/models.py", line 974, in json
+    return complexjson.loads(self.text, **kwargs)
+           ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.13/json/__init__.py", line 346, in loads
+    return _default_decoder.decode(s)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^
+  File "/usr/lib/python3.13/json/decoder.py", line 348, in decode
+    raise JSONDecodeError("Extra data", s, end)
+json.decoder.JSONDecodeError: Extra data: line 1 column 5 (char 4)
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/saranshlulla/Documents/Market Sentiment/run_tests.py", line 46, in <module>
+    run_tests()
+    ~~~~~~~~~^^
+  File "/home/saranshlulla/Documents/Market Sentiment/run_tests.py", line 19, in run_tests
+    print(r.json())
+          ~~~~~~^^
+  File "/home/saranshlulla/Documents/Market Sentiment/.venv/lib/python3.13/site-packages/requests/models.py", line 978, in json
+    raise RequestsJSONDecodeError(e.msg, e.doc, e.pos)
+requests.exceptions.JSONDecodeError: Extra data: line 1 column 5 (char 4)

@@ -1,0 +1,260 @@
+"""
+Fine-tuning script for FinBERT on Indian financial headlines.
+
+Run once after manually labeling ~500-800 headlines.
+
+Expected input:  data/labeled_headlines.csv
+  Columns: headline (str), label (positive | negative | neutral)
+
+Output:  models/finbert-indian-markets/  (best checkpoint by val F1)
+
+Usage:
+    python nlp/fine_tune.py
+    python nlp/fine_tune.py --data data/labeled_headlines.csv --epochs 5
+"""
+
+import argparse
+import csv
+import json
+import logging
+import random
+from pathlib import Path
+
+import numpy as np
+import torch
+from sklearn.metrics import classification_report, f1_score
+from transformers import (
+    BertForSequenceClassification,
+    BertTokenizer,
+    EarlyStoppingCallback,
+    Trainer,
+    TrainingArguments,
+)
+
+logging.basicConfig(level=logging.INFO)
+log = logging.getLogger(__name__)
+
+_BASE       = Path(__file__).resolve().parent.parent
+_MODEL_NAME = "ProsusAI/finbert"
+_LABEL2ID   = {"positive": 0, "negative": 1, "neutral": 2}
+_ID2LABEL   = {v: k for k, v in _LABEL2ID.items()}
+
+
+# ---------------------------------------------------------------------------
+# Dataset
+# ---------------------------------------------------------------------------
+
+class HeadlineDataset(torch.utils.data.Dataset):
+    def __init__(self, encodings: dict, labels: list[int]):
+        self.encodings = encodings
+        self.labels    = labels
+
+    def __len__(self):
+        return len(self.labels)
+
+    def __getitem__(self, idx):
+        item = {k: torch.tensor(v[idx]) for k, v in self.encodings.items()}
+        item["labels"] = torch.tensor(self.labels[idx])
+        return item
+
+
+# ---------------------------------------------------------------------------
+# Data loading and splitting
+# ---------------------------------------------------------------------------
+
+def load_data(csv_path: Path) -> tuple[list[str], list[int]]:
+    texts, labels = [], []
+    skipped = 0
+    with open(csv_path, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            label_str = row["label"].strip().lower()
+            if label_str not in _LABEL2ID:
+                skipped += 1
+                continue
+            texts.append(row["headline"].strip())
+            labels.append(_LABEL2ID[label_str])
+    if skipped:
+        log.warning(f"Skipped {skipped} rows with unrecognised labels.")
+    log.info(f"Loaded {len(texts)} labeled examples from {csv_path}")
+    return texts, labels
+
+
+def split_data(
+    texts: list[str],
+    labels: list[int],
+    train_ratio: float = 0.70,
+    val_ratio: float   = 0.15,
+    seed: int          = 42,
+) -> tuple:
+    """Stratified 70/15/15 split preserving class balance."""
+    from collections import defaultdict
+    buckets: dict[int, list[int]] = defaultdict(list)
+    for i, lbl in enumerate(labels):
+        buckets[lbl].append(i)
+
+    rng = random.Random(seed)
+    train_idx, val_idx, test_idx = [], [], []
+
+    for lbl, idxs in buckets.items():
+        rng.shuffle(idxs)
+        n = len(idxs)
+        n_train = int(n * train_ratio)
+        n_val   = int(n * val_ratio)
+        train_idx.extend(idxs[:n_train])
+        val_idx.extend(idxs[n_train : n_train + n_val])
+        test_idx.extend(idxs[n_train + n_val :])
+
+    def _select(idx_list):
+        return [texts[i] for i in idx_list], [labels[i] for i in idx_list]
+
+    tr_t, tr_l = _select(train_idx)
+    va_t, va_l = _select(val_idx)
+    te_t, te_l = _select(test_idx)
+
+    log.info(f"Split — train: {len(tr_t)}, val: {len(va_t)}, test: {len(te_t)}")
+    return (tr_t, tr_l), (va_t, va_l), (te_t, te_l)
+
+
+# ---------------------------------------------------------------------------
+# Metrics
+# ---------------------------------------------------------------------------
+
+def compute_metrics(eval_pred):
+    logits, labels = eval_pred
+    preds = np.argmax(logits, axis=1)
+    return {
+        "f1_macro": f1_score(labels, preds, average="macro"),
+        "f1_weighted": f1_score(labels, preds, average="weighted"),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Main fine-tuning routine
+# ---------------------------------------------------------------------------
+
+def fine_tune(
+    data_path: Path,
+    output_dir: Path,
+    epochs: int      = 3,
+    batch_size: int  = 16,
+    lr: float        = 2e-5,
+    seed: int        = 42,
+) -> None:
+    tokenizer = BertTokenizer.from_pretrained(_MODEL_NAME)
+    model     = BertForSequenceClassification.from_pretrained(
+        _MODEL_NAME,
+        num_labels=3,
+        id2label=_ID2LABEL,
+        label2id=_LABEL2ID,
+    )
+
+    texts, labels = load_data(data_path)
+    (tr_t, tr_l), (va_t, va_l), (te_t, te_l) = split_data(texts, labels, seed=seed)
+
+    def _encode(t):
+        return tokenizer(t, truncation=True, max_length=128, padding="max_length")
+
+    train_ds = HeadlineDataset(_encode(tr_t), tr_l)
+    val_ds   = HeadlineDataset(_encode(va_t), va_l)
+    test_ds  = HeadlineDataset(_encode(te_t), te_l)
+
+    training_args = TrainingArguments(
+        output_dir                  = str(output_dir / "checkpoints"),
+        num_train_epochs            = epochs,
+        per_device_train_batch_size = batch_size,
+        per_device_eval_batch_size  = batch_size,
+        learning_rate               = lr,
+        weight_decay                = 0.01,
+        eval_strategy               = "epoch",
+        save_strategy               = "epoch",
+        load_best_model_at_end      = True,
+        metric_for_best_model       = "f1_macro",
+        greater_is_better           = True,
+        logging_dir                 = str(output_dir / "logs"),
+        logging_steps               = 20,
+        seed                        = seed,
+        report_to                   = "none",   # disable wandb/HF hub logging
+    )
+
+    trainer = Trainer(
+        model           = model,
+        args            = training_args,
+        train_dataset   = train_ds,
+        eval_dataset    = val_ds,
+        compute_metrics = compute_metrics,
+        callbacks       = [EarlyStoppingCallback(early_stopping_patience=2)],
+    )
+
+    log.info("Starting fine-tuning ...")
+    trainer.train()
+
+    # Save best model
+    best_model_path = output_dir / "best"
+    trainer.save_model(str(best_model_path))
+    tokenizer.save_pretrained(str(best_model_path))
+    log.info(f"Best model saved to {best_model_path}")
+
+    # Evaluate on test set
+    log.info("Evaluating on test set ...")
+    test_preds_output = trainer.predict(test_ds)
+    test_preds = np.argmax(test_preds_output.predictions, axis=1)
+    test_labels = te_l
+
+    report = classification_report(
+        test_labels, test_preds,
+        target_names=[_ID2LABEL[i] for i in range(3)],
+        digits=4,
+    )
+    log.info(f"\n{report}")
+
+    # Persist report + loss history for the project report
+    metrics_path = output_dir / "test_metrics.txt"
+    metrics_path.write_text(report)
+
+    log_history = trainer.state.log_history
+    loss_path = output_dir / "loss_history.json"
+    loss_path.write_text(json.dumps(log_history, indent=2))
+    log.info(f"Metrics saved to {metrics_path}")
+    log.info(f"Loss history saved to {loss_path}")
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Fine-tune FinBERT on labeled headlines")
+    parser.add_argument(
+        "--data", type=Path,
+        default=_BASE / "data" / "labeled_headlines.csv",
+        help="Path to labeled CSV (columns: headline, label)",
+    )
+    parser.add_argument(
+        "--output", type=Path,
+        default=_BASE / "models" / "finbert-indian-markets",
+        help="Directory to save best model and metrics",
+    )
+    parser.add_argument("--epochs",     type=int,   default=3)
+    parser.add_argument("--batch-size", type=int,   default=16)
+    parser.add_argument("--lr",         type=float, default=2e-5)
+    parser.add_argument("--seed",       type=int,   default=42)
+    args = parser.parse_args()
+
+    if not args.data.exists():
+        print(
+            f"[fine_tune] Labeled data not found at {args.data}\n"
+            f"Create a CSV with columns 'headline' and 'label' "
+            f"(positive | negative | neutral), then re-run."
+        )
+        raise SystemExit(1)
+
+    args.output.mkdir(parents=True, exist_ok=True)
+    fine_tune(
+        data_path  = args.data,
+        output_dir = args.output,
+        epochs     = args.epochs,
+        batch_size = args.batch_size,
+        lr         = args.lr,
+        seed       = args.seed,
+    )
