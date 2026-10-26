@@ -155,3 +155,8 @@ def test_gemini_payload_and_failure(monkeypatch):
         request.return_value.status_code = 429
         with pytest.raises(RuntimeError, match="429"):
             generate_text("Hello")
+
+
+def test_exact_company_match_ranks_before_substring():
+    assert main.search("Infosys")["results"][0]["symbol"] == "INFY"
+    assert main.search("Reliance")["results"][0]["symbol"] == "RELIANCE"

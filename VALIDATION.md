@@ -3,7 +3,7 @@
 ## Verified locally
 
 - Python 3.12.6 on Windows, CPU-only PyTorch 2.6.0 and Transformers 4.44.2.
-- `python -m pytest -q`: **18 passed**. Covers API status/validation, search, ticker linking, SQLite deduplication and confidence flags, weighting and confidence gating, history bucket boundaries and UTC timestamps, in-process/HTTP clients, Streamlit rendering and input changes, missing-key behavior, mocked Google News retry/deduplication, and Gemini payload/error handling.
+- `python -m pytest -q`: **19 passed**. Covers API status/validation, search, ticker linking, SQLite deduplication and confidence flags, weighting and confidence gating, history bucket boundaries and UTC timestamps, in-process/HTTP clients, Streamlit rendering and input changes, missing-key behavior, mocked Google News retry/deduplication, and Gemini payload/error handling.
 - All application Python files parsed successfully; the original explainer syntax error is fixed.
 - Actual public ProsusAI/finbert download and inference: the headline “Reliance Industries reports record quarterly profit and strong growth” returned score **+0.9281**, confidence **0.9500**. This is a smoke test, not a predictive accuracy benchmark.
 - Actual Integrated Gradients execution (8 interpolation steps) returned finite word attributions. The explainer shares the scorer's checkpoint and explains a fixed predicted class.
@@ -15,6 +15,8 @@
 - Public URL: https://indian-stock-sentiment-analysis.streamlit.app/
 - Verified Python 3.12.15, Streamlit 1.56.0, CPU-only PyTorch 2.6.0 in build logs.
 - Hosted app fetched news on its empty database, loaded FinBERT, and rendered Reliance sentiment (-0.005), five recent articles, and the history/source charts.
+- Hosted Integrated Gradients demo produced signed word attributions successfully.
+- Exact company search ranking was corrected after testing Infosys on the hosted app.
 - Original repository and deployment fork both contain the implementation commit `02b2c75`.
 
 ## Limits

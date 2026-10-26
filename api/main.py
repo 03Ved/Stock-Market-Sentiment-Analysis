@@ -187,6 +187,14 @@ def search(q: str = Query(..., min_length=1, description="Ticker or company name
     matches: list[dict] = []
     seen: set[str] = set()
 
+    # Exact company aliases must beat substring matches such as HCL Infosystems.
+    exact_symbol = NAME_TO_SYMBOL.get(q_lower)
+    if q_upper in SYMBOL_SET:
+        exact_symbol = q_upper
+    if exact_symbol:
+        matches.append({"symbol": exact_symbol, "name": q_lower, "match_type": "exact"})
+        seen.add(exact_symbol)
+
     # Exact symbol prefix match
     for sym in sorted(SYMBOL_SET):
         if sym.startswith(q_upper) and sym not in seen:
