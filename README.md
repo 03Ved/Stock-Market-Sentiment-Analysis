@@ -1,5 +1,9 @@
 # Stock Market Sentiment Analysis — Indian Equities
 
+**Live demo:** https://indian-stock-sentiment-analysis.streamlit.app/
+
+**Deployment repository:** https://github.com/03Ved/Stock-Market-Sentiment-Analysis
+
 An NLP application that fetches financial news, links companies to an NSE symbol master, scores headlines with FinBERT, and combines article scores using source reliability, model confidence, and exponential time decay. Streamlit provides ticker search, sentiment charts, source articles, Integrated Gradients explanations, saved evaluation results, and an optional Gemini assistant. FastAPI exposes the same analysis separately.
 
 ## Run the demo
