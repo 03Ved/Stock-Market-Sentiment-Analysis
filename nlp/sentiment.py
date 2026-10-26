@@ -10,6 +10,7 @@ batch_score() — score a list of strings efficiently
 
 import json
 import logging
+import threading
 from pathlib import Path
 
 import torch
@@ -28,36 +29,38 @@ _LABELS = ["positive", "negative", "neutral"]   # index 0, 1, 2
 
 _tokenizer: BertTokenizer | None = None
 _model: BertForSequenceClassification | None = None
+_model_lock = threading.Lock()
 
 
 def _load_model() -> None:
     global _tokenizer, _model
-    if _model is not None:
-        return
-    import os
-    model_path = _MODEL_NAME  # default: ProsusAI/finbert
-    fine_tuned_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "models", "finbert-indian-markets", "best")
-    if os.path.exists(os.path.join(fine_tuned_path, "config.json")):
-        model_path = fine_tuned_path
-        log.info(f"Using fine-tuned model from {model_path}")
-    else:
-        log.info(f"Fine-tuned model not found, using pretrained {model_path}")
-    _tokenizer = BertTokenizer.from_pretrained(model_path)
-    _model = BertForSequenceClassification.from_pretrained(model_path)
-    _model.eval()
+    with _model_lock:
+        if _model is not None:
+            return
+        import os
+        model_path = _MODEL_NAME  # default: ProsusAI/finbert
+        fine_tuned_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "models", "finbert-indian-markets", "best")
+        if os.path.exists(os.path.join(fine_tuned_path, "config.json")):
+            model_path = fine_tuned_path
+            log.info(f"Using fine-tuned model from {model_path}")
+        else:
+            log.info(f"Fine-tuned model not found, using pretrained {model_path}")
+        _tokenizer = BertTokenizer.from_pretrained(model_path)
+        _model = BertForSequenceClassification.from_pretrained(model_path)
+        _model.eval()
 
-    # Verify label order matches expectation
-    id2label = _model.config.id2label
-    expected = {0: "positive", 1: "negative", 2: "neutral"}
-    for idx, label in expected.items():
-        actual = id2label.get(idx, "").lower()
-        if actual != label:
-            log.warning(
-                f"FinBERT label mismatch at index {idx}: "
-                f"expected '{label}', got '{actual}'. "
-                f"Scores may be incorrect — check model config."
-            )
-    log.info("FinBERT loaded.")
+        # Verify label order matches expectation
+        id2label = _model.config.id2label
+        expected = {0: "positive", 1: "negative", 2: "neutral"}
+        for idx, label in expected.items():
+            actual = id2label.get(idx, "").lower()
+            if actual != label:
+                log.warning(
+                    f"FinBERT label mismatch at index {idx}: "
+                    f"expected '{label}', got '{actual}'. "
+                    f"Scores may be incorrect — check model config."
+                )
+        log.info("FinBERT loaded.")
 
 
 # ---------------------------------------------------------------------------

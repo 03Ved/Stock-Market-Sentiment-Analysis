@@ -40,7 +40,7 @@ def _execute_with_retry(fn):
 _TICKER_DOCS_MINIMAL_SQL = """
     SELECT source_weight, published_at, sentiment, low_confidence
     FROM   documents
-    WHERE  published_at >= ?
+    WHERE  julianday(published_at) >= julianday(?)
       AND  sentiment IS NOT NULL
       AND  json_type(tickers) = 'array'
       AND  EXISTS (
@@ -54,7 +54,7 @@ _TICKER_DOCS_FULL_SQL = """
     SELECT id, source_id, source_weight, url, headline,
            published_at, sentiment, low_confidence
     FROM   documents
-    WHERE  published_at >= ?
+    WHERE  julianday(published_at) >= julianday(?)
       AND  sentiment IS NOT NULL
       AND  json_type(tickers) = 'array'
       AND  EXISTS (
@@ -94,7 +94,7 @@ def fetch_docs_for_ticker(
     sql = f"""
         SELECT {col_clause}
         FROM   documents
-        WHERE  published_at >= ?
+        WHERE  julianday(published_at) >= julianday(?)
           AND  sentiment IS NOT NULL
           AND  json_type(tickers) = 'array'
           AND  EXISTS (

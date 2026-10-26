@@ -72,7 +72,7 @@ def insert_doc(conn, doc: dict) -> bool:
             doc["scraped_at"],
             json.dumps(doc["tickers"]),
             json.dumps(doc["sentiment"]) if doc["sentiment"] is not None else None,
-            0,
+            int(doc.get("low_confidence", (doc.get("sentiment") or {}).get("low_confidence", False))),
         ),
     )
     return cursor.rowcount == 1

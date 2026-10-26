@@ -11,6 +11,7 @@ Optional integrations (all fall back silently if keys are absent):
 """
 
 import hashlib
+import os
 import json
 import logging
 import re
@@ -96,13 +97,11 @@ def generate_smart_queries(symbol: str, company_name: str) -> list[str]:
     api_key = os.getenv("GEMINI_API_KEY", "")
     name = company_name or symbol
 
-    if not api_key:
-        return _build_fallback_queries(name, symbol)
+    if not api_key or os.getenv("ENABLE_GEMINI_ENRICHMENT", "0") != "1":
+        return _build_fallback_queries(name, symbol)[:3]
 
     try:
-        import google.generativeai as genai
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-2.5-flash")
+        from agent.gemini import generate_text
 
         prompt = f"""Generate exactly 4 Google News search queries to find opinionated financial articles about {company_name or symbol} ({symbol}), an Indian stock listed on NSE.
 
@@ -115,8 +114,8 @@ Rules:
 
 Return ONLY the 4 queries, one per line, no numbering, no explanation."""
 
-        response = model.generate_content(prompt)
-        gemini_queries = [q.strip() for q in response.text.strip().split("\n") if q.strip()]
+        response_text = generate_text(prompt)
+        gemini_queries = [q.strip() for q in response_text.strip().split("\n") if q.strip()]
         gemini_queries = [q for q in gemini_queries if 5 < len(q) < 80][:4]
 
         if len(gemini_queries) >= 2:
@@ -139,7 +138,7 @@ Return ONLY the 4 queries, one per line, no numbering, no explanation."""
     except Exception as exc:
         logger.warning(f"Gemini query generation failed for {symbol}: {exc}")
 
-    return _build_fallback_queries(name, symbol)
+    return _build_fallback_queries(name, symbol)[:3]
 
 
 def filter_relevant_headlines(headlines: list[str], symbol: str, company_name: str) -> set[int]:
@@ -153,13 +152,11 @@ def filter_relevant_headlines(headlines: list[str], symbol: str, company_name: s
     import os
     api_key = os.getenv("GEMINI_API_KEY", "")
 
-    if not api_key or len(headlines) == 0:
+    if not api_key or os.getenv("ENABLE_GEMINI_ENRICHMENT", "0") != "1" or len(headlines) == 0:
         return set(range(len(headlines)))
 
     try:
-        import google.generativeai as genai
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-2.0-flash")
+        from agent.gemini import generate_text
 
         numbered = "\n".join(f"{i}: {h}" for i, h in enumerate(headlines))
         prompt = f"""Below are news headlines fetched for the stock {company_name or symbol} ({symbol}).
@@ -168,14 +165,14 @@ def filter_relevant_headlines(headlines: list[str], symbol: str, company_name: s
 
 Return ONLY the numbers of headlines that:
 1. Are specifically about {company_name or symbol} (not just mentioning it in a list)
-2. Contain an opinion, analysis, or forward-looking statement (not just a factual stock list)
-3. Would have a clear positive or negative sentiment
+2. Are substantive company news, analysis, or forward-looking statements
+3. May be positive, negative, OR neutral; never exclude a headline for neutral sentiment
 
 Return the numbers as comma-separated values. If none qualify, return "NONE".
 No explanation needed."""
 
-        response = model.generate_content(prompt)
-        text = response.text.strip()
+        response_text = generate_text(prompt)
+        text = response_text.strip()
 
         if text == "NONE":
             return set()
@@ -313,14 +310,16 @@ def fetch_google_news_for_ticker(symbol: str, company_name: str = None) -> int:
         all_entries: list[tuple[str, object]] = []  # (headline, feedparser entry)
         inserted_count = 0
 
-        for qi, query in enumerate(queries):
+        for qi, query in enumerate(queries[:3]):
             encoded_query = urllib.parse.quote(query)
             url = f"https://news.google.com/rss/search?q={encoded_query}&hl=en-IN&gl=IN&ceid=IN:en"
 
             logger.info(f"Fetching Google News RSS ({qi+1}/{len(queries)}) for {symbol}: q={query}")
 
             try:
-                feed = feedparser.parse(url)
+                response = requests.get(url, timeout=15)
+                response.raise_for_status()
+                feed = feedparser.parse(response.content)
             except Exception as exc:
                 logger.warning(f"Failed to parse feed for query '{query}': {exc}")
                 continue
@@ -352,7 +351,7 @@ def fetch_google_news_for_ticker(symbol: str, company_name: str = None) -> int:
             # ── Pass 3: insert and score surviving entries ─────────────────────────
             inserted_count = 0
 
-            for i, (headline, entry) in enumerate(all_entries):
+            for i, (headline, entry) in enumerate(all_entries[:24]):
                 if i not in keep_indices:
                     logger.debug(f"Gemini filtered out: {headline[:60]}")
                     continue
@@ -381,12 +380,13 @@ def fetch_google_news_for_ticker(symbol: str, company_name: str = None) -> int:
                     }
 
                     with get_connection() as conn:
-                        was_new = insert_doc(conn, doc)
-
-                    if not was_new:
+                        existing = conn.execute("SELECT sentiment FROM documents WHERE id = ?", (doc_id,)).fetchone()
+                    if existing is not None and existing["sentiment"] is not None:
                         continue
-
                     result = score_document({"headline": headline, "body": body})
+                    doc["sentiment"] = result
+                    with get_connection() as conn:
+                        insert_doc(conn, doc)
 
                     with get_connection() as conn:
                         conn.execute(

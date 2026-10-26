@@ -68,7 +68,9 @@ class SentimentExplainer:
         baseline_ids = torch.full_like(input_ids, self.tokenizer.pad_token_id)
 
         # Get embedding layer
-        embhttp://localhost:8501/edding_layer = self.model.get_input_embeddings()
+        if n_steps < 1:
+            raise ValueError("n_steps must be positive")
+        embedding_layer = self.model.get_input_embeddings()
 
         with torch.no_grad():
             input_embeds = embedding_layer(input_ids)
@@ -78,21 +80,20 @@ class SentimentExplainer:
         delta = input_embeds - baseline_embeds
         attributions = torch.zeros_like(input_embeds)
 
+        # Explain one fixed target: the prediction for the actual input.
+        with torch.no_grad():
+            pred_class = self.model(**inputs).logits.argmax(-1).item()
+
         for step in range(n_steps):
-            alpha = step / n_steps
+            alpha = (step + 0.5) / n_steps
             interpolated = (baseline_embeds + alpha * delta).detach().requires_grad_(True)
 
             outputs = self.model(
                 inputs_embeds=interpolated, attention_mask=attention_mask
             )
-            pred_class = outputs.logits.argmax(-1).item()
             score = outputs.logits[0, pred_class]
-
-            self.model.zero_grad()
-            score.backward(retain_graph=True)
-
-            if interpolated.grad is not None:
-                attributions += interpolated.grad.detach()
+            gradient, = torch.autograd.grad(score, interpolated)
+            attributions += gradient.detach()
 
         # Scale attributions by the input-baseline delta
         attributions = (attributions / n_steps) * delta
@@ -156,7 +157,9 @@ def get_explainer() -> SentimentExplainer:
     """Get or create the singleton SentimentExplainer."""
     global _explainer
     if _explainer is None:
-        _explainer = SentimentExplainer()
+        from nlp import sentiment
+        sentiment._load_model()
+        _explainer = SentimentExplainer(model=sentiment._model, tokenizer=sentiment._tokenizer)
     return _explainer
 
 

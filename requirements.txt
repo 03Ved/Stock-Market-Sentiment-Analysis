@@ -1,38 +1,19 @@
-# Data ingestion
+# Streamlit runtime (training/evaluation extras are separate)
 feedparser==6.0.11
 requests==2.32.3
 beautifulsoup4==4.12.3
-
-# Scheduling
 APScheduler==3.10.4
-
-# Database
-# sqlite3 is stdlib
-
-# NLP / DL
 transformers==4.44.2
-torch>=2.5.0
+# CPU wheel avoids installing CUDA libraries on Community Cloud.
+torch==2.6.0; sys_platform == "win32"
+torch @ https://download.pytorch.org/whl/cpu/torch-2.6.0%2Bcpu-cp312-cp312-linux_x86_64.whl ; sys_platform == "linux" and python_version == "3.12"
+torch==2.6.0; sys_platform != "win32" and sys_platform != "linux"
 vaderSentiment==3.3.2
 rapidfuzz==3.14.5
-
-# ML evaluation
-scikit-learn>=1.5.0
-numpy>=1.26.0
-matplotlib>=3.9.0
-seaborn>=0.13.0
-
-# API
+numpy>=1.26,<3
+pandas>=2.2,<3
 fastapi==0.115.0
 uvicorn==0.30.6
-
-# Dashboard
-streamlit==1.38.0
-plotly==6.6.0
-
-# Utilities
+streamlit>=1.38,<2
+plotly>=5.24,<7
 python-dotenv==1.0.1
-
-# Agent / LLM (Phase 7)
-langchain>=0.3.0
-langchain-openai>=0.2.0
-google-generativeai==0.8.4

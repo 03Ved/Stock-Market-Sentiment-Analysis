@@ -14,23 +14,16 @@ import json
 import logging
 import os
 
-import requests
+from dashboard.client import get_data
 
 logger = logging.getLogger(__name__)
 
-API_BASE = os.getenv("API_BASE_URL", "http://localhost:8000")
 
 
 def get_ticker_data(symbol: str, window: str = "7d") -> dict:
     """Fetch sentiment data for a ticker from our API."""
     try:
-        r = requests.get(
-            f"{API_BASE}/ticker/{symbol}",
-            params={"window": window},
-            timeout=15,
-        )
-        if r.status_code == 200:
-            return r.json()
+        return get_data(f"/ticker/{symbol}", window=window)
     except Exception as exc:
         logger.error(f"Failed to fetch ticker data for {symbol}: {exc}")
     return {"error": f"Could not fetch data for {symbol}"}
@@ -39,10 +32,8 @@ def get_ticker_data(symbol: str, window: str = "7d") -> dict:
 def search_ticker(query: str) -> list[str]:
     """Search for ticker symbols matching a query string."""
     try:
-        r = requests.get(f"{API_BASE}/search", params={"q": query}, timeout=5)
-        if r.status_code == 200:
-            data = r.json()
-            return [item["symbol"] for item in data.get("results", [])[:5]]
+        data = get_data("/search", q=query)
+        return [item["symbol"] for item in data.get("results", [])[:5]]
     except Exception as exc:
         logger.debug(f"Ticker search failed for '{query}': {exc}")
     return []
@@ -53,23 +44,9 @@ def build_context(user_message: str) -> str:
     Extract ticker references from user message, fetch their sentiment data,
     and build a context string for the LLM.
     """
-    words = user_message.upper().split()
+    from nlp.ticker_linker import link_tickers
     context_parts = []
-    seen_symbols = set()
-
-    for word in words:
-        cleaned = word.strip("?.,!:;'\"()[]")
-        if len(cleaned) < 2 or not cleaned.replace("&", "").replace("-", "").isalpha():
-            continue
-        results = search_ticker(cleaned)
-        if not results:
-            continue
-
-        symbol = results[0]
-        if symbol in seen_symbols:
-            continue
-        seen_symbols.add(symbol)
-
+    for symbol in link_tickers(user_message)[:3]:
         data = get_ticker_data(symbol, "7d")
         if "error" in data:
             continue
@@ -117,16 +94,9 @@ def chat(user_message: str, history: list[dict]) -> str:
     if not api_key:
         return (
             "⚠️ Gemini API key not configured. "
-            "Add GEMINI_API_KEY to your .env file. "
+            "Add GEMINI_API_KEY to Streamlit secrets or your .env file. "
             "Get a key at https://aistudio.google.com/apikey"
         )
-
-    try:
-        import google.generativeai as genai
-    except ImportError:
-        return "⚠️ google-generativeai package not installed. Run: pip install google-generativeai"
-
-    genai.configure(api_key=api_key)
 
     # Build context from live data
     context = build_context(user_message)
@@ -145,19 +115,14 @@ def chat(user_message: str, history: list[dict]) -> str:
         f"{context}"
     )
 
-    model = genai.GenerativeModel("gemini-2.0-flash")
-
-    gemini_history = []
-    for msg in history:
+    contents = []
+    for msg in history[-10:]:
         role = "user" if msg["role"] == "user" else "model"
-        gemini_history.append({"role": role, "parts": [msg["content"]]})
-
+        contents.append({"role": role, "parts": [{"text": msg["content"]}]})
+    contents.append({"role": "user", "parts": [{"text": user_message}]})
     try:
-        chat_session = model.start_chat(history=gemini_history)
-        response = chat_session.send_message(
-            f"[System context: {system_prompt}]\n\nUser question: {user_message}"
-        )
-        return response.text
+        from agent.gemini import generate
+        return generate(contents, system_prompt=system_prompt)
     except Exception as exc:
         logger.error(f"Gemini API error: {exc}")
         return f"⚠️ Error communicating with Gemini: {str(exc)}"

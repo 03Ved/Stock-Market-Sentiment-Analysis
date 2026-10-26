@@ -5,10 +5,11 @@ model evaluation, and AI-powered sentiment assistance.
 """
 
 import datetime
+import html
+from zoneinfo import ZoneInfo
 import json
 import os
 import sys
-import requests
 import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
@@ -23,10 +24,20 @@ if _project_root not in sys.path:
 from dotenv import load_dotenv
 load_dotenv(os.path.join(_project_root, ".env"))
 
-API_BASE = os.getenv("API_BASE_URL", "http://localhost:8001")
+from dashboard.client import get_data
+from db.database import init_db
+
+st.set_page_config(page_title="Market Sentiment Intelligence", page_icon="📊", layout="wide")
+
+@st.cache_resource
+def initialize_database():
+    init_db()
+    return True
+
+initialize_database()
 
 # Setup Page
-st.set_page_config(page_title="Market Sentiment Intelligence", page_icon="", layout="wide")
+
 
 st.markdown(
     """
@@ -54,13 +65,7 @@ WINDOW_MAP = {
 def render_sentiment_chart(symbol: str, window_str: str, hours: int):
     """Render a professional dual-axis sentiment chart."""
     try:
-        resp = requests.get(
-            f"{API_BASE}/ticker/{symbol}/history",
-            params={"hours": hours, "resolution": "auto"},
-            timeout=10,
-        )
-        resp.raise_for_status()
-        data = resp.json()
+        data = get_data(f"/ticker/{symbol}/history", hours=hours, resolution="auto")
     except Exception as e:
         st.warning(f"Could not load chart data: {e}")
         return
@@ -71,7 +76,10 @@ def render_sentiment_chart(symbol: str, window_str: str, hours: int):
         return
 
     df = pd.DataFrame(points)
-    df["timestamp"] = pd.to_datetime(df["timestamp"])
+    if not df["score"].notna().any():
+        st.info("No time bucket has enough scored articles for a trend yet.")
+        return
+    df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True).dt.tz_convert("Asia/Kolkata")
 
     fig = go.Figure()
 
@@ -153,12 +161,7 @@ def render_attribution_visualization(attrs: list[dict], headline: str, score: fl
         abs_attr = abs(norm_attr)
         if abs_attr > 0.15:
             opacity = min(abs_attr * 0.8, 0.85)
-            if score is not None and score > 0.05:
-                bg = f"rgba(16,185,129,{opacity})"
-            elif score is not None and score < -0.05:
-                bg = f"rgba(239,68,68,{opacity})"
-            else:
-                bg = f"rgba(99,102,241,{opacity})"
+            bg = f"rgba(16,185,129,{opacity})" if norm_attr > 0 else f"rgba(239,68,68,{opacity})"
             text_color = "white" if opacity > 0.5 else "inherit"
         else:
             bg = "rgba(150,150,150,0.1)"
@@ -166,7 +169,7 @@ def render_attribution_visualization(attrs: list[dict], headline: str, score: fl
         html_parts.append(
             f'<span style="background:{bg};color:{text_color};padding:4px 8px;'
             f'border-radius:6px;margin:2px;display:inline-block;'
-            f'font-size:15px;font-weight:500;line-height:2.2">{tok}</span>'
+            f'font-size:15px;font-weight:500;line-height:2.2">{html.escape(tok)}</span>'
         )
 
     st.markdown(
@@ -185,15 +188,10 @@ def render_attribution_visualization(attrs: list[dict], headline: str, score: fl
 
     tokens = [t for t, _ in sorted_attrs]
     values = [v for _, v in sorted_attrs]
-    if score is not None and score > 0.05:
-        colors = ["#10B981" if abs(v) > 0.1 else "#6B7280" for v in values]
-    elif score is not None and score < -0.05:
-        colors = ["#EF4444" if abs(v) > 0.1 else "#6B7280" for v in values]
-    else:
-        colors = ["#6B7280" for v in values]
+    colors = ["#10B981" if v > 0 else "#EF4444" for v in values]
 
     fig = go.Figure(go.Bar(
-        x=[abs(v) for v in values],
+        x=values,
         y=tokens,
         orientation="h",
         marker_color=colors,
@@ -203,8 +201,8 @@ def render_attribution_visualization(attrs: list[dict], headline: str, score: fl
     fig.update_layout(
         title=dict(text="Token Attribution Scores (Top 10)", font=dict(size=14)),
         xaxis=dict(
-            title="Attribution strength (longer bar = stronger influence on prediction)",
-            range=[0, 1.1],
+            title="Signed influence on the predicted class",
+            range=[-1.1, 1.1],
             zeroline=True,
             zerolinecolor="rgba(150,150,150,0.4)",
             gridcolor="rgba(150,150,150,0.1)",
@@ -218,40 +216,24 @@ def render_attribution_visualization(attrs: list[dict], headline: str, score: fl
 
     st.plotly_chart(fig, use_container_width=True)
 
-    # Part 3: Auto-generated interpretation
-    top_drivers = sorted(meaningful, key=lambda x: abs(x[1]), reverse=True)[:5]
-    top_positive = [(t, v) for t, v in top_drivers] if score is not None and score > 0.05 else []
-    top_negative = [(t, v) for t, v in top_drivers] if score is not None and score < -0.05 else []
-
-    interpretation_parts = []
-    if top_positive:
-        pos_words = ", ".join(
-            f"**{t}**" for t, _ in sorted(top_positive, key=lambda x: -x[1])[:3]
-        )
-        interpretation_parts.append(f"Bullish signals: {pos_words}")
-    if top_negative:
-        neg_words = ", ".join(
-            f"**{t}**" for t, _ in sorted(top_negative, key=lambda x: x[1])[:3]
-        )
-        interpretation_parts.append(f"Bearish signals: {neg_words}")
-
-    if score is not None:
-        if score > 0.1:
-            verdict = "📈 **Overall: Bullish**"
-        elif score < -0.1:
-            verdict = "📉 **Overall: Bearish**"
-        else:
-            verdict = "➡️ **Overall: Neutral**"
-        interpretation_parts.append(verdict)
-
-    if interpretation_parts:
-        st.markdown(" | ".join(interpretation_parts))
+    st.caption("Green supports the predicted class; red opposes it. "
+               "For a negative prediction, supporting tokens are evidence for negative sentiment.")
 
     st.caption(
+        "Signed attributions target the model's predicted class; negative values oppose that class. "
         "Attribution computed using Integrated Gradients (Sundararajan et al., 2017) "
         "over the FinBERT transformer backbone."
     )
 
+
+@st.cache_data(ttl=900, show_spinner=False)
+def load_ticker(symbol, window):
+    return get_data(f"/ticker/{symbol}", window=window)
+
+st.caption("FinBERT news sentiment for Indian equities. Data refreshes on demand; not a price prediction.")
+if st.button("Refresh news and scores"):
+    load_ticker.clear()
+st.caption("First analysis may take a minute while the model downloads. News results are cached for 15 minutes.")
 
 tab_dashboard, tab_evaluation, tab_chat = st.tabs([
     "Sentiment Dashboard", 
@@ -265,7 +247,7 @@ with tab_dashboard:
 
     col_search, col_window = st.columns([2, 1])
     with col_search:
-        search_query = st.text_input("Search for a ticker (e.g. Reliance, Idea, Tata)", value="")
+        search_query = st.text_input("Search for a ticker (e.g. Reliance, Idea, Tata)", value="Reliance")
     with col_window:
         selected_window_label = st.selectbox("Time Window", list(WINDOW_MAP.keys()), index=4)
 
@@ -274,14 +256,14 @@ with tab_dashboard:
     if search_query:
         # call search endpoint
         try:
-            r = requests.get(f"{API_BASE}/search", params={"q": search_query})
-            r.raise_for_status()
-            results = r.json().get("results", [])
+            results = get_data("/search", q=search_query).get("results", [])
             options = {res["symbol"]: f"{res['symbol']} - {res.get('name', res['symbol'])}" for res in results}
         except Exception:
             options = {}
-            st.error("Error connecting to search API.")
+            st.error("Could not load ticker search. Check the application logs.")
         
+        if not options:
+            st.info("No matching ticker found. Try an NSE symbol or company name.")
         if options:
             selected_ticker = st.selectbox("Select Ticker", list(options.keys()), format_func=lambda x: options[x])
             
@@ -289,9 +271,7 @@ with tab_dashboard:
                 st.markdown("---")
                 try:
                     with st.spinner("Fetching sentiment data..."):
-                        r2 = requests.get(f"{API_BASE}/ticker/{selected_ticker}", params={"window": window_str})
-                        r2.raise_for_status()
-                        ticker_data = r2.json()
+                        ticker_data = load_ticker(selected_ticker, window_str)
                 except Exception as e:
                     st.error(f"Error fetching ticker data: {e}")
                     ticker_data = {}
@@ -324,8 +304,8 @@ with tab_dashboard:
                                      delta=f"Confidence: {ticker_data.get('confidence', 'Unknown').capitalize()}", 
                                      delta_color="off")
                         with m3:
-                            now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
-                            st.metric("Time Window", selected_window_label, delta=f"As of {now_str}", delta_color="off")
+                            now_str = datetime.datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M")
+                            st.metric("Time Window", selected_window_label, delta=f"As of {now_str} IST", delta_color="off")
                             
                         st.markdown("---")
                         render_sentiment_chart(selected_ticker, window_str, window_hours)
@@ -351,9 +331,9 @@ with tab_dashboard:
                                     if st.button("Show word attribution", key=f"attr_{idx}_{article.get('id')}"):
                                         with st.spinner("Analyzing..."):
                                             try:
-                                                exp_r = requests.get(f"{API_BASE}/explain/{article.get('id')}")
-                                                if exp_r.status_code == 200:
-                                                    attrs = exp_r.json().get("attributions", [])
+                                                explanation = get_data(f"/explain/{article.get('id')}")
+                                                if explanation:
+                                                    attrs = explanation.get("attributions", [])
                                                     st.markdown("#### Explainability")
                                                     render_attribution_visualization(attrs, hd, art_score)
                                                 else:
@@ -362,7 +342,7 @@ with tab_dashboard:
                                                 st.error("Error contacting explainer API.")
                                                 
                         with col_sources:
-                            st.subheader("Source Breakdown")
+                            st.subheader("Sources in top articles")
                             source_counts = {}
                             for a in articles:
                                 src = a.get("source_id", "Unknown")
@@ -377,17 +357,20 @@ with tab_dashboard:
 with tab_evaluation:
     st.header("Model Evaluation")
     st.markdown("Deep learning model metrics and explainability tools for FinBERT.")
+    st.info("These are previously saved results, not a benchmark run on this deployment. "
+            "The evaluation mixes manual and model-generated labels; scores are not an independent accuracy estimate. "
+            "The fine-tuned checkpoint is not bundled with the repository.")
     
     st.subheader("Model Comparison")
-    mc_path = "evaluation/model_comparison.json"
+    mc_path = os.path.join(_project_root, "evaluation/model_comparison.json")
     if os.path.exists(mc_path):
         try:
             with open(mc_path, "r") as f:
                 mc_data = json.load(f)
             mc_df = pd.DataFrame(mc_data).T.reset_index().rename(columns={"index": "Model"})
             st.dataframe(mc_df, hide_index=True, use_container_width=True)
-            if os.path.exists("evaluation/plots/model_comparison.png"):
-                st.image("evaluation/plots/model_comparison.png")
+            if os.path.exists(os.path.join(_project_root, "evaluation/plots/model_comparison.png")):
+                st.image(os.path.join(_project_root, "evaluation/plots/model_comparison.png"))
         except Exception as e:
             st.error(f"Error loading model comparison: {e}")
     else:
@@ -396,15 +379,15 @@ with tab_evaluation:
     col_cm, col_tc = st.columns(2)
     with col_cm:
         st.subheader("Confusion Matrix")
-        if os.path.exists("evaluation/plots/confusion_matrix.png"):
-            st.image("evaluation/plots/confusion_matrix.png", use_container_width=True)
+        if os.path.exists(os.path.join(_project_root, "evaluation/plots/confusion_matrix.png")):
+            st.image(os.path.join(_project_root, "evaluation/plots/confusion_matrix.png"), use_container_width=True)
         else:
             st.warning("Confusion matrix not yet generated.")
             
     with col_tc:
         st.subheader("Training Curves")
-        if os.path.exists("evaluation/plots/training_curves.png"):
-            st.image("evaluation/plots/training_curves.png", use_container_width=True)
+        if os.path.exists(os.path.join(_project_root, "evaluation/plots/training_curves.png")):
+            st.image(os.path.join(_project_root, "evaluation/plots/training_curves.png"), use_container_width=True)
         else:
             st.warning("Training curves not yet generated.")
 
@@ -415,14 +398,14 @@ with tab_evaluation:
     silver_count = 0
     cat_counts = {}
     try:
-        if os.path.exists("data/labeled_headlines.csv"):
-            df_g = pd.read_csv("data/labeled_headlines.csv")
+        if os.path.exists(os.path.join(_project_root, "data/labeled_headlines.csv")):
+            df_g = pd.read_csv(os.path.join(_project_root, "data/labeled_headlines.csv"))
             gold_count = len(df_g)
             for c, v in df_g["label"].value_counts().items():
                 cat_counts[c] = cat_counts.get(c, 0) + v
                 
-        if os.path.exists("data/silver_labels.csv"):
-            df_s = pd.read_csv("data/silver_labels.csv")
+        if os.path.exists(os.path.join(_project_root, "data/silver_labels.csv")):
+            df_s = pd.read_csv(os.path.join(_project_root, "data/silver_labels.csv"))
             silver_count = len(df_s)
             for c, v in df_s["label"].value_counts().items():
                 cat_counts[c] = cat_counts.get(c, 0) + v

@@ -11,6 +11,9 @@ Endpoints:
 
 import json
 import re
+import math
+from contextlib import asynccontextmanager
+from config.settings import BASE_DIR
 from datetime import datetime, timezone, timedelta
 
 from fastapi import FastAPI, HTTPException, Query
@@ -22,7 +25,14 @@ from db.database import get_connection, init_db
 from db.queries import fetch_ticker_docs_full
 from nlp.ticker_linker import SYMBOL_SET, NAME_TO_SYMBOL
 
+@asynccontextmanager
+async def lifespan(app):
+    init_db()
+    yield
+
+
 app = FastAPI(
+    lifespan=lifespan,
     title="Market Sentiment API",
     description="NSE/BSE sentiment scores derived from financial news and Reddit.",
     version="0.2.0",
@@ -34,11 +44,6 @@ app.add_middleware(
     allow_methods=["GET"],
     allow_headers=["*"],
 )
-
-
-@app.on_event("startup")
-def startup():
-    init_db()
 
 
 # ---------------------------------------------------------------------------
@@ -114,6 +119,11 @@ def _parse_window(window: str) -> tuple[timedelta, float]:
     # Interpolate decay: heavier for short windows, lighter for long
     lambda_decay = max(0.01, min(1.0, 0.3 * (24 / hours)))
     return delta, lambda_decay
+
+
+def _utc_datetime(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
 
 
 def _top_articles(docs: list[dict], now: datetime, lambda_decay: float, n: int = 5) -> list[dict]:
@@ -231,7 +241,7 @@ def ticker_sentiment(
             # Load company name lookup
             ticker_names = {}
             try:
-                with open("data/ticker_names.json", "r", encoding="utf-8") as _f:
+                with open(BASE_DIR / "data" / "ticker_names.json", "r", encoding="utf-8") as _f:
                     ticker_names = _json.load(_f)
             except Exception:
                 pass
@@ -327,16 +337,16 @@ def ticker_history(
     docs = fetch_ticker_docs_full(symbol, since)
 
     # Build time buckets
-    n_buckets = max(1, hours // bucket_hours)
+    n_buckets = max(1, math.ceil(hours / bucket_hours))
     points = []
 
     for i in range(n_buckets):
         bucket_start = since + timedelta(hours=i * bucket_hours)
-        bucket_end   = since + timedelta(hours=(i + 1) * bucket_hours)
+        bucket_end   = min(now, since + timedelta(hours=(i + 1) * bucket_hours))
 
         bucket_docs = [
             d for d in docs
-            if bucket_start.isoformat() <= d["published_at"] < bucket_end.isoformat()
+            if bucket_start <= _utc_datetime(d["published_at"]) < bucket_end
         ]
 
         # Use within-bucket decay relative to bucket end

@@ -37,7 +37,7 @@ def effective_weight(doc: dict, now: datetime, lambda_decay: float = 0.3) -> flo
     if published.tzinfo is None:
         published = published.replace(tzinfo=timezone.utc)
 
-    age_hours      = (now - published).total_seconds() / 3600
+    age_hours      = max(0, (now - published).total_seconds() / 3600)
     time_weight    = math.exp(-lambda_decay * age_hours)
     confidence     = doc["sentiment"]["confidence"]
 
@@ -60,6 +60,8 @@ def aggregate_ticker(docs: list[dict], now: datetime, lambda_decay: float = 0.3)
         }
     """
     if len(docs) < MIN_DOCS_FOR_SCORE:
+        return None
+    if all(d.get("low_confidence", False) for d in docs):
         return None
 
     weights = [effective_weight(d, now, lambda_decay) for d in docs]

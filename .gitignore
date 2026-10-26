@@ -7,6 +7,10 @@ build/
 
 # Virtual environment
 .venv/
+.deps/
+.pytest_cache/
+.streamlit/secrets.toml
+test-results.xml
 
 # Environment variables
 .env
@@ -26,3 +30,6 @@ models/
 
 # Claude
 .claude/
+
+.hf-cache/
+.validation/
